@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>图片消散工具</title>
+    <style>
+        /* 保持 09 年极简白色风格 */
+        body {
+            background-color: #f0f0f0;
+            color: #333;
+            font-family: Arial, "MS Sans Serif", "Microsoft YaHei", sans-serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 50px;
+        }
+
+        .container {
+            background-color: #fff;
+            border: 1px solid #999;
+            padding: 15px;
+            box-shadow: 2px 2px 5px rgba(0,0,0,0.1);
+            width: fit-content;
+            min-width: 450px;
+        }
+
+        h1 {
+            font-size: 18px;
+            margin: 0 0 15px 0;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+            font-weight: bold;
+            color: #000;
+        }
+
+        .canvas-area {
+            background-color: #f7f7f7;
+            border: 1px solid #ccc;
+            margin-bottom: 15px;
+            position: relative;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 250px;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            cursor: pointer;
+        }
+
+        #status-text {
+            position: absolute;
+            color: #999;
+            font-size: 12px;
+        }
+
+        .toolbar {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            background: #f9f9f9;
+            padding: 10px;
+            border: 1px solid #ccc;
+        }
+
+        .stats {
+            margin-left: auto;
+            font-size: 11px;
+            color: #666;
+            padding: 2px 8px;
+            border-left: 1px solid #ddd;
+        }
+
+        button, .file-label {
+            font-size: 12px;
+            padding: 5px 12px;
+            cursor: pointer;
+            border: 1px solid #707070;
+            background: linear-gradient(to bottom, #fff 0%, #e0e0e0 100%);
+            color: #000;
+            border-radius: 3px;
+        }
+
+        button:hover, .file-label:hover {
+            background: linear-gradient(to bottom, #e0e0e0 0%, #cfcfcf 100%);
+            border-color: #555;
+        }
+
+        button:active {
+            background: #d0d0d0;
+            box-shadow: inset 1px 1px 2px rgba(0,0,0,0.2);
+        }
+
+        button:disabled {
+            color: #999;
+            cursor: default;
+            background: #f5f5f5;
+        }
+
+        .file-label {
+            display: inline-block;
+            text-decoration: none;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .footer {
+            margin-top: 10px;
+            font-size: 11px;
+            color: #888;
+        }
+
+        /* 复古 Cookie 弹窗样式 */
+        #cookie-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.4);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        #cookie-modal {
+            background: #fff;
+            border: 1px solid #000;
+            padding: 20px;
+            width: 320px;
+            box-shadow: 5px 5px 0px rgba(0,0,0,0.2);
+        }
+
+        #cookie-modal p {
+            font-size: 12px;
+            line-height: 1.6;
+            margin-top: 0;
+        }
+
+        .modal-buttons {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>焚烧掉你的罪恶吧(つд⊂)</h1>
+
+        <div class="canvas-area">
+            <canvas id="canvas"></canvas>
+            <div id="status-text">请上传图片文件</div>
+        </div>
+
+        <div class="toolbar">
+            <label class="file-label">
+                浏览图片...
+                <input type="file" id="imageInput" accept="image/*">
+            </label>
+
+            <button id="snapBtn" disabled>开始火化</button>
+            <button id="resetBtn">重置</button>
+
+            <div class="stats">
+                功德: <span id="burnCount">0</span> 点
+            </div>
+        </div>
+    </div>
+
+    <!-- Cookie 同意弹窗 -->
+    <div id="cookie-overlay">
+        <div id="cookie-modal">
+            <p><b>隐私提示：</b><br>本站希望使用 Cookie 来记录您的统计数据。如果您同意，我们将保存焚烧图片的总数。</p>
+            <div class="modal-buttons">
+                <button id="cookie-decline">拒绝</button>
+                <button id="cookie-accept" style="font-weight:bold;">接受并继续</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const imageInput = document.getElementById('imageInput');
+        const snapBtn = document.getElementById('snapBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const statusText = document.getElementById('status-text');
+        const burnCountDisplay = document.getElementById('burnCount');
+
+        const cookieOverlay = document.getElementById('cookie-overlay');
+        const cookieAccept = document.getElementById('cookie-accept');
+        const cookieDecline = document.getElementById('cookie-decline');
+
+        let particles = [];
+        let originalImage = null;
+        let isAnimating = false;
+        let animationId = null;
+        let startTime = 0;
+        let pixelStore = null;
+        let scannedGrid = null;
+        let burnCount = 0;
+        let cookieAllowed = false;
+
+        // --- Cookie 处理 ---
+        function setCookie(name, value, days) {
+            if (!cookieAllowed) return;
+            let expires = "";
+            if (days) {
+                let date = new Date();
+                date.setTime(date.getTime() + (days*24*60*60*1000));
+                expires = "; expires=" + date.toUTCString();
+            }
+            document.cookie = name + "=" + (value || "")  + expires + "; path=/";
+        }
+
+        function getCookie(name) {
+            let nameEQ = name + "=";
+            let ca = document.cookie.split(';');
+            for(let i=0;i < ca.length;i++) {
+                let c = ca[i];
+                while (c.charAt(0)==' ') c = c.substring(1,c.length);
+                if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length,c.length);
+            }
+            return null;
+        }
+
+        // --- 初始化状态 ---
+        window.onload = () => {
+            const consent = getCookie("cookie_consent");
+            if (consent === "true") {
+                cookieAllowed = true;
+                loadBurnCount();
+            } else if (consent === null) {
+                cookieOverlay.style.display = "flex";
+            }
+        };
+
+        cookieAccept.onclick = () => {
+            cookieAllowed = true;
+            cookieOverlay.style.display = "none";
+            setCookie("cookie_consent", "true", 365);
+            loadBurnCount();
+        };
+
+        cookieDecline.onclick = () => {
+            cookieAllowed = false;
+            cookieOverlay.style.display = "none";
+        };
+
+        function loadBurnCount() {
+            const savedCount = getCookie("burn_total");
+            if (savedCount) {
+                burnCount = parseInt(savedCount);
+                burnCountDisplay.innerText = burnCount;
+            }
+        }
+
+        function incrementBurnCount() {
+            burnCount++;
+            burnCountDisplay.innerText = burnCount;
+            setCookie("burn_total", burnCount, 365);
+        }
+
+        // --- 核心逻辑 ---
+        class Particle {
+            constructor(x, y, r, g, b, a, isSpark = false) {
+                this.x = x;
+                this.y = y;
+                this.isSpark = isSpark;
+
+                if (isSpark) {
+                    const hue = Math.random() > 0.5 ? 20 : 45;
+                    this.color = `hsla(${hue}, 100%, 60%, `;
+                    this.size = Math.random() * 2 + 1;
+                    this.vx = (Math.random() - 0.2) * 4 + 2;
+                    this.vy = (Math.random() - 0.9) * 6 - 2;
+                    this.decay = Math.random() * 0.03 + 0.02;
+                } else {
+                    const gray = (r + g + b) / 5;
+                    this.color = `rgba(${gray},${gray},${gray},`;
+                    this.size = Math.random() * 1.5 + 1;
+                    this.vx = (Math.random() - 0.2) * 2 + 1;
+                    this.vy = (Math.random() - 0.8) * 3 - 1;
+                    this.decay = Math.random() * 0.015 + 0.005;
+                }
+
+                this.gravity = -0.04;
+                this.friction = 0.96;
+                this.life = 1.0;
+            }
+
+            update() {
+                this.vx *= this.friction;
+                this.vy *= this.friction;
+                this.vy += this.gravity;
+                this.x += this.vx;
+                this.y += this.vy;
+                this.life -= this.decay;
+            }
+
+            draw(context) {
+                if (this.life <= 0) return;
+                if (this.isSpark) {
+                    context.shadowBlur = 4;
+                    context.shadowColor = "orange";
+                    context.fillStyle = this.color + this.life + ")";
+                } else {
+                    context.fillStyle = this.color + this.life + ")";
+                }
+                context.fillRect(Math.floor(this.x), Math.floor(this.y), this.size, this.size);
+                context.shadowBlur = 0;
+            }
+        }
+
+        imageInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    originalImage = img;
+                    resetCanvas();
+                    statusText.style.display = 'none';
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        function resetCanvas() {
+            if (!originalImage) return;
+            isAnimating = false;
+            cancelAnimationFrame(animationId);
+            particles = [];
+
+            const maxWidth = 600, maxHeight = 400;
+            let w = originalImage.width, h = originalImage.height;
+            const ratio = Math.min(maxWidth / w, maxHeight / h, 1);
+            canvas.width = w * ratio;
+            canvas.height = h * ratio;
+
+            ctx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+            pixelStore = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+            const step = 3;
+            const rows = Math.ceil(canvas.height / step);
+            const cols = Math.ceil(canvas.width / step);
+            scannedGrid = new Uint8Array(rows * cols);
+
+            snapBtn.disabled = false;
+        }
+
+        function startDisintegration() {
+            if (isAnimating || !originalImage) return;
+            isAnimating = true;
+            snapBtn.disabled = true;
+            startTime = performance.now();
+
+            // 每次启动焚烧逻辑，增加一次计数
+            incrementBurnCount();
+
+            requestAnimationFrame(animate);
+        }
+
+        function animate(now) {
+            if (!isAnimating) return;
+            const elapsed = now - startTime;
+            const duration = 2500;
+            const progress = Math.min(elapsed / duration, 1.5);
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            const maxDist = Math.sqrt(canvas.width ** 2 + canvas.height ** 2);
+            const currentThreshold = progress * maxDist;
+
+            generateNewParticles(currentThreshold);
+
+            let activeParticles = false;
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                p.update();
+                p.draw(ctx);
+                if (p.life <= 0) {
+                    particles.splice(i, 1);
+                } else {
+                    activeParticles = true;
+                }
+            }
+
+            drawRemainingImage(currentThreshold);
+
+            if (progress < 1.5 || activeParticles) {
+                animationId = requestAnimationFrame(animate);
+            } else {
+                isAnimating = false;
+                snapBtn.disabled = false;
+            }
+        }
+
+        function generateNewParticles(threshold) {
+            const step = 3;
+            const width = canvas.width;
+            const height = canvas.height;
+            const data = pixelStore.data;
+            const cols = Math.ceil(width / step);
+
+            for (let y = 0; y < height; y += step) {
+                for (let x = 0; x < width; x += step) {
+                    const gridX = Math.floor(x / step);
+                    const gridY = Math.floor(y / step);
+                    const gridIdx = gridY * cols + gridX;
+
+                    if (scannedGrid[gridIdx] === 1) continue;
+
+                    const dx = x - width;
+                    const dy = y - 0;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+
+                    if (dist < threshold) {
+                        const imgIdx = (y * width + x) * 4;
+                        if (data[imgIdx + 3] > 50) {
+                            const isSpark = Math.random() > 0.85;
+                            particles.push(new Particle(
+                                x, y,
+                                data[imgIdx], data[imgIdx+1], data[imgIdx+2],
+                                data[imgIdx+3]/255,
+                                isSpark
+                            ));
+                        }
+                        scannedGrid[gridIdx] = 1;
+                    }
+                }
+            }
+        }
+
+        function drawRemainingImage(threshold) {
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            const tCtx = tempCanvas.getContext('2d');
+            tCtx.drawImage(originalImage, 0, 0, canvas.width, canvas.height);
+
+            const imgData = tCtx.getImageData(0, 0, canvas.width, canvas.height);
+            const data = imgData.data;
+            const w = canvas.width;
+            const burnEdgeWidth = 12;
+
+            for (let y = 0; y < canvas.height; y++) {
+                for (let x = 0; x < w; x++) {
+                    const dx = x - w, dy = y - 0;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    const idx = (y * w + x) * 4;
+
+                    if (dist < threshold) {
+                        data[idx + 3] = 0;
+                    } else if (dist < threshold + burnEdgeWidth) {
+                        const edgeRatio = (dist - threshold) / burnEdgeWidth;
+
+                        if (edgeRatio < 0.3) {
+                            data[idx] = 255;
+                            data[idx + 1] = 80;
+                            data[idx + 2] = 0;
+                        } else if (edgeRatio < 0.7) {
+                            data[idx] *= 0.2;
+                            data[idx + 1] *= 0.1;
+                            data[idx + 2] *= 0.05;
+                        }
+                    }
+                }
+            }
+            tCtx.putImageData(imgData, 0, 0);
+            ctx.drawImage(tempCanvas, 0, 0);
+        }
+
+        snapBtn.addEventListener('click', startDisintegration);
+        resetBtn.addEventListener('click', resetCanvas);
+    </script>
+</body>
+</html>
